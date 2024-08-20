@@ -1,0 +1,171 @@
+public with sharing class MaintenanceRequestHelper {
+    
+    public static void updateWorkOrders(List<Case> existingMainReq) {
+        // TODO: Complete the method to update workorders
+        Integer count = 0;
+        Map<Id, Integer> toGetDueDateMap = new Map<Id, Integer>();
+        Map<Id,Case> newCasesToIdsMap = new Map<Id,Case>();
+        List<Case> createNewMainReq = new List<Case>();
+        List<Case> caseIdsList = new List<Case>();
+        Map<Equipment_Maintenance_Item__c,Id> EquipMainItemsToProdIds = new Map<Equipment_Maintenance_Item__c,Id>();
+        
+        if(!existingMainReq.isEmpty()){
+            for(Case cc : existingMainReq){
+                if((cc.Type == 'Repair' || cc.Type == 'Routine Maintenance') && cc.Status == 'Closed'){
+                    caseIdsList.add(cc);   
+                }
+            }    
+        }
+        List<Equipment_Maintenance_Item__c> equipMainList = [Select id,Equipment__c,Maintenance_Request__c from Equipment_Maintenance_Item__c where Maintenance_Request__c IN : caseIdsList];
+        if(!equipMainList.isEmpty()){
+            for(Equipment_Maintenance_Item__c equipMainn : equipMainList){
+                EquipMainItemsToProdIds.put(equipMainn,equipMainn.Equipment__c);
+                system.debug(EquipMainItemsToProdIds.size());
+                if(EquipMainItemsToProdIds.size() > 1){
+                    count = EquipMainItemsToProdIds.size();
+                }
+            }  
+        }
+      List<Equipment_Maintenance_Item__c> EMIList = [Select Equipment__r.Maintenance_Cycle__c,Equipment__c from Equipment_Maintenance_Item__c where Equipment__r.Id IN :EquipMainItemsToProdIds.values() AND Maintenance_Request__c IN:caseIdsList order By Equipment__r.Maintenance_Cycle__c ASC limit 1];
+            for(Equipment_Maintenance_Item__c equip : EMIList){
+                toGetDueDateMap.put(equip.Id,Integer.valueOf(equip.Equipment__r.Maintenance_Cycle__c));  
+                for(Case c : caseIdsList){
+                    Case mainRe = new Case();
+                    mainRe.Vehicle__c = c.Vehicle__c;
+                    mainRe.status = 'New';
+                    mainRe.Type = 'Routine Maintenance';
+                    mainRe.Subject = 'New Main Request For Vehicle for Apex Specialist';
+                    mainRe.Date_Reported__c = date.today();
+                    if(count > 1){
+                        mainRe.Date_Due__c = Date.today().addDays(toGetDueDateMap.get(equip.Id));
+                    }
+                    else{
+                        mainRe.Date_Due__c = Date.today();
+                    }
+                    createNewMainReq.add(mainRe);
+                    newCasesToIdsMap.put(c.Id,mainRe);
+                }  
+               insert createNewMainReq; 
+                if(caseIdsList.size()>0 && newCasesToIdsMap.size()>0){
+                        cloneEquipItems(caseIdsList,newCasesToIdsMap);
+                    }
+            }
+    }
+    public static void cloneEquipItems(List<case> closedCaseRecords, Map<Id,case> newCreatedCasesMapp){
+        List<Equipment_Maintenance_Item__c> newEquipItems = new List<Equipment_Maintenance_Item__c>();
+       
+            if(!closedCaseRecords.isEmpty() && newCreatedCasesMapp.size()>0){
+                List<Equipment_Maintenance_Item__c> oldEquipItems = [SELECT Equipment__c, Maintenance_Request__c, Quantity__c,Maintenance_Request__r.Id
+                                                                     FROM Equipment_Maintenance_Item__c
+                                                                     WHERE  Maintenance_Request__c IN :closedCaseRecords];
+                
+                for(Equipment_Maintenance_Item__c equipItem : oldEquipItems) {
+                    
+                    Equipment_Maintenance_Item__c newItem = equipItem.clone(false, true, false, false);
+                    newItem.Maintenance_Request__c = newCreatedCasesMapp.get(equipItem.Maintenance_Request__c).id;
+                    newEquipItems.add(newItem);
+                }
+                insert newEquipItems;
+            }
+       
+        
+    }
+    // code below can be used to check how to return map and update in function 
+   /* public static void updateWorkOrders(list<case> listCase, Map<id,Case> mapCase) {
+        // TODO: Complete the method to update workorders
+        list<id> closedCaseID = new list<id>();
+        list<case> insertCaseList = new list<case>();
+        list<case> legitCase = new list<case>();
+        Map<Id,Integer> equipmentLifeCycle = new Map<Id,Integer>();
+        Map<Equipment_Maintenance_Item__c,ID> mapEMI2Prod = new Map<Equipment_Maintenance_Item__c,ID>();
+        Map<id, case> newInsertCase = new Map<id,case>();
+        //list<case> listEMI =[select id,(select id,Equipment__c,Maintenance_Request__c,Quantity__c from Equipment_Maintenance_Items__r) from case];
+        //system.debug(listEMI);
+        string VehicleId = '';
+        for(case c: listCase ){
+            if (c.Status == 'Closed' && (c.type =='Repair' || c.type =='Routine Maintenance') ){
+                closedCaseID.add(c.id);
+                legitCase.add(c);
+                VehicleId = c.Vehicle__c;
+                system.debug('yes, repair case or Routine Maintenance is closed, id:  '+ c.id + 'vehicle ID: '+ c.Vehicle__c );
+                Case newCase = new Case();
+                newCase.Type = 'Routine Maintenance';
+                newCase.Status = 'New';
+                newCase.Vehicle__c = c.Vehicle__c;
+                newCase.Subject =  c.Subject;
+                newCase.Date_Reported__c = Date.today();
+                newCase.Date_Due__c = Date.today() + lessdayprocess(listCase).get(c.Id);
+                newCase.Product__c  = c.Product__c;
+                newCase.ParentId = c.id;
+                //
+                insertCaseList.add(newCase);
+                newInsertCase.put(c.id,newCase);
+            }
+            if(insertCaseList.size() > 0){
+                insert insertCaseList;
+                cloneEquipItems(legitCase,newInsertCase);
+            }
+        }
+        //code below is wrong 
+        list<Equipment_Maintenance_Item__c> listEMI = [Select id,Equipment__c,Maintenance_Request__c from Equipment_Maintenance_Item__c where Maintenance_Request__c IN : closedCaseID];
+        if(!listEMI.isEmpty()){
+            for(Equipment_Maintenance_Item__c EMI : listEMI ){
+                mapEMI2Prod.put(EMI, EMI.Equipment__c);
+            }
+        }
+        
+        list<Equipment_Maintenance_Item__c> listEMIprocess = [Select Equipment__r.Maintenance_Cycle__c,Equipment__c 
+                                                              from Equipment_Maintenance_Item__c where 
+                                                              Equipment__r.Id IN :mapEMI2Prod.values() AND Maintenance_Request__c IN:closedCaseID order 
+                                                              By Equipment__r.Maintenance_Cycle__c ASC limit 1];
+        for(Equipment_Maintenance_Item__c EMI: listEMIprocess ){
+            equipmentLifeCycle.put(EMI.id,Integer.valueOf(EMI.Equipment__r.Maintenance_Cycle__c));
+        }
+        
+        
+        
+        
+    }
+    private static Map<Id, Integer> lessdayprocess(List<Case> cases) {
+    Map<Id, Case> caseMap = new Map<Id, Case>(cases);
+    Map<Id, Integer> lessDate = new Map<Id, Integer>();
+    List<Equipment_Maintenance_Item__c> relatedList = [
+            SELECT Maintenance_Request__c,
+                    Equipment__r.Maintenance_Cycle__c
+            FROM Equipment_Maintenance_Item__c
+            WHERE Maintenance_Request__c = :caseMap.keySet()
+    ];
+
+    for (Id caseId : caseMap.keySet()) {
+        for (Equipment_Maintenance_Item__c equip : relatedList) {
+            if (!lessDate.containsKey(caseId) && caseId == equip.Maintenance_Request__c) {
+                lessDate.put(caseId, (Integer) equip.Equipment__r.Maintenance_Cycle__c);
+            } else if (lessDate.containsKey(caseId) && lessDate.get(caseId) > (Integer) equip.Equipment__r.Maintenance_Cycle__c) {
+                lessDate.put(caseId, (Integer) equip.Equipment__r.Maintenance_Cycle__c);
+            }
+        }
+    }
+    return lessDate; 
+    }
+     public static void cloneEquipItems(List<case> closedCaseRecords, Map<Id,case> newCreatedCasesMapp){
+        List<Equipment_Maintenance_Item__c> newEquipItems = new List<Equipment_Maintenance_Item__c>();
+        try{
+            if(!closedCaseRecords.isEmpty() && newCreatedCasesMapp.size()>0){
+                List<Equipment_Maintenance_Item__c> oldEquipItems = [SELECT Equipment__c, Maintenance_Request__c, Quantity__c,Maintenance_Request__r.Id
+                                                                     FROM Equipment_Maintenance_Item__c
+                                                                     WHERE  Maintenance_Request__c IN :closedCaseRecords];
+                
+                for(Equipment_Maintenance_Item__c equipItem : oldEquipItems) {
+                    
+                    Equipment_Maintenance_Item__c newItem = equipItem.clone(false, true, false, false);
+                    newItem.Maintenance_Request__c = newCreatedCasesMapp.get(equipItem.Maintenance_Request__c).id;
+                    newEquipItems.add(newItem);
+                }
+                insert newEquipItems;
+            }
+        }
+        catch(Exception e){
+            System.debug('Exception is'+ e);
+        }
+    }*/
+}
